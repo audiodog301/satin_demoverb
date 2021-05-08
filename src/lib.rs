@@ -9,6 +9,8 @@ use baseplug::{
     Plugin,
 };
 
+const MAX: i32 = 44_100;
+
 struct Buffer {
     contents: Vec<f32>,
     input: i32,
@@ -45,7 +47,7 @@ struct Delay {
 
 impl Delay {
     pub fn new(time: i32) -> Self {
-        let mut buffer = Buffer::new(44_100);
+        let mut buffer = Buffer::new(MAX as usize);
         
         let mut result = Self {
             buffer: buffer,
@@ -69,28 +71,66 @@ impl Delay {
     }
 }
 
+struct DelayWithFeedback {
+    initial_delay: Delay,
+    feedback_delay: Delay,
+    former_initial: f32,
+    former_feedback: f32,
+    feedback: f32,
+}
+
+impl DelayWithFeedback {
+    pub fn new(time: i32) -> Self {
+        Self {
+            initial_delay: Delay::new(time),
+            feedback_delay: Delay::new(time),
+            former_initial: 0f32,
+            former_feedback: 0f32,
+            feedback: 0.5f32,
+        }
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        self.former_initial = self.initial_delay.process(input + (self.feedback * self.former_feedback));
+        self.former_feedback = self.feedback_delay.process(self.former_initial);
+
+        self.former_initial
+    }
+
+    fn set_time(&mut self, time: i32) {
+        self.initial_delay.set_time(time);
+        self.feedback_delay.set_time(time);
+    }
+
+    fn set_feedback(&mut self, feedback: f32) {
+        self.feedback = feedback;
+    }
+}
+
 baseplug::model! {
     #[derive(Debug, Serialize, Deserialize)]
     struct ReverbModel {
         #[model(min = 0.0, max = 1.0)]
-        #[parameter(name = "amount")]
-        time: f32
+        #[parameter(name = "time")]
+        time: f32,
+
+        #[model(min = 0.0, max = 1.0)]
+        #[parameter(name = "feedback")]
+        feedback: f32,
     }
 }
 
 impl Default for ReverbModel {
     fn default() -> Self {
         Self {
-            time: 1.0
+            time: 1.0,
+            feedback: 0.5,
         }
     }
 }
 
 struct Reverb {
-    delay_left: Delay,
-    feedback_left: Delay,
-    delay_one: f32,
-    delay_feedback: f32,
+    delay_left: DelayWithFeedback,
 }
 
 impl Plugin for Reverb {
@@ -106,10 +146,7 @@ impl Plugin for Reverb {
     #[inline]
     fn new(_sample_rate: f32, _model: &ReverbModel) -> Self {
         Self {
-            delay_left: Delay::new(44_100),
-            feedback_left: Delay::new(44_100),
-            delay_one: 0f32,
-            delay_feedback: 0f32,
+            delay_left: DelayWithFeedback::new(MAX)
         }
     }
 
@@ -120,14 +157,13 @@ impl Plugin for Reverb {
         
         for i in 0..ctx.nframes {          
             if model.time.is_smoothing() {
-                self.delay_left.set_time((model.time[i] * 44_100f32) as i32);
-                //self.delay_left.buffer.contents.iter_mut().map(|x| *x = 0f32).count();
+                self.delay_left.set_time((model.time[i] * MAX as f32) as i32);
             }
-
-            self.delay_one = self.delay_left.process(input[0][i] + 0.5 * self.delay_feedback);
-            self.delay_feedback = self.feedback_left.process(self.delay_one);
-            
-            output[0][i] = self.delay_one;
+            if model.feedback.is_smoothing() {
+                self.delay_left.set_feedback(model.feedback[i]);
+            }
+           
+            output[0][i] = self.delay_left.process(input[0][i]);
             output[1][i] = input[1][i];
         }
     }            
