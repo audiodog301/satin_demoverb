@@ -168,7 +168,7 @@ impl Plugin for Reverb {
             }
            
             output[0][i] = self.delay_left.process(input[0][i]);
-            output[1][i] = self.delay_right.process(input[0][i]);
+            output[1][i] = self.delay_right.process(input[1][i]);
         }
     }            
 }
