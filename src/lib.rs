@@ -112,10 +112,10 @@ impl Plugin for Reverb {
         for i in 0..ctx.nframes {          
             if model.time.is_smoothing() {
                 self.delay_left.set_time((model.time[i] * 44_100f32) as usize);
-                self.delay_left.buffer.contents.iter_mut().map(|x| *x = 0f32).count();
+                //self.delay_left.buffer.contents.iter_mut().map(|x| *x = 0f32).count();
             }
             
-            output[0][i] = (input[0][i] + self.delay_left.process(input[0][i])) / 2f32;
+            output[0][i] = self.delay_left.process(input[0][i]);
             output[1][i] = input[1][i];
         }
     }            
