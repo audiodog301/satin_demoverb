@@ -46,7 +46,7 @@ struct Delay {
 impl Delay {
     pub fn new(time: u32) -> Self {
         let mut buffer = Buffer::new(44_100);
-        buffer.output = (buffer.output as i32 - time as i32).rem_euclid(buffer.contents.len() as i32) as usize;
+        buffer.output = (buffer.input as i32 - time as i32).rem_euclid(buffer.contents.len() as i32) as usize;
         
         Self {
             buffer: buffer,
@@ -62,7 +62,7 @@ impl Delay {
     }
 
     fn set_time(&mut self, time: usize) {
-        self.buffer.output = (self.buffer.output as i32 - time as i32).rem_euclid(self.buffer.contents.len() as i32) as usize
+        self.buffer.output = (self.buffer.input as i32 - time as i32).rem_euclid(self.buffer.contents.len() as i32) as usize
     }
 }
 
