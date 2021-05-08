@@ -67,6 +67,37 @@ impl Delay {
     }
 
     fn set_time(&mut self, time: i32) {
+        self.buffer.output = (self.buffer.input - time).rem_euclid(self.buffer.contents.len() as i32)
+    }
+}
+
+struct RoundingErrorDelay {
+    buffer: Buffer,
+    time: i32,
+}
+
+impl RoundingErrorDelay {
+    pub fn new(time: i32) -> Self {
+        let mut buffer = Buffer::new(MAX as usize);
+        
+        let mut result = Self {
+            buffer: buffer,
+            time: time,
+        };
+
+        result.set_time(time);
+
+        result
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        self.buffer.write(input);
+        let out = self.buffer.read();
+        self.buffer.increment();
+        out
+    }
+
+    fn set_time(&mut self, time: i32) {
         self.buffer.output = (self.buffer.output - time).rem_euclid(self.buffer.contents.len() as i32)
     }
 }
@@ -84,6 +115,42 @@ impl DelayWithFeedback {
         Self {
             initial_delay: Delay::new(time),
             feedback_delay: Delay::new(time),
+            former_initial: 0f32,
+            former_feedback: 0f32,
+            feedback: 0.5f32,
+        }
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        self.former_initial = self.initial_delay.process(input + (self.feedback * self.former_feedback));
+        self.former_feedback = self.feedback_delay.process(self.former_initial);
+
+        self.former_initial
+    }
+
+    fn set_time(&mut self, time: i32) {
+        self.initial_delay.set_time(time);
+        self.feedback_delay.set_time(time);
+    }
+
+    fn set_feedback(&mut self, feedback: f32) {
+        self.feedback = feedback;
+    }
+}
+
+struct RoundingErrorDelayWithFeedback {
+    initial_delay: RoundingErrorDelay,
+    feedback_delay: RoundingErrorDelay,
+    former_initial: f32,
+    former_feedback: f32,
+    feedback: f32,
+}
+
+impl RoundingErrorDelayWithFeedback {
+    pub fn new(time: i32) -> Self {
+        Self {
+            initial_delay: RoundingErrorDelay::new(time),
+            feedback_delay: RoundingErrorDelay::new(time),
             former_initial: 0f32,
             former_feedback: 0f32,
             feedback: 0.5f32,
@@ -131,7 +198,6 @@ impl Default for ReverbModel {
 
 struct Reverb {
     delay_left: DelayWithFeedback,
-    delay_right: DelayWithFeedback,
 }
 
 impl Plugin for Reverb {
@@ -148,7 +214,6 @@ impl Plugin for Reverb {
     fn new(_sample_rate: f32, _model: &ReverbModel) -> Self {
         Self {
             delay_left: DelayWithFeedback::new(MAX),
-            delay_right: DelayWithFeedback::new(MAX),
         }
     }
 
@@ -160,15 +225,12 @@ impl Plugin for Reverb {
         for i in 0..ctx.nframes {          
             if model.time.is_smoothing() {
                 self.delay_left.set_time((model.time[i] * MAX as f32) as i32);
-                self.delay_right.set_time((model.time[i] * MAX as f32) as i32);
             }
             if model.feedback.is_smoothing() {
                 self.delay_left.set_feedback(model.feedback[i]);
-                self.delay_right.set_feedback(model.feedback[i]);
             }
            
             output[0][i] = self.delay_left.process(input[0][i]);
-            output[1][i] = self.delay_right.process(input[1][i]);
         }
     }            
 }
