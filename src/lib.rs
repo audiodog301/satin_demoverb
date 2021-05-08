@@ -88,6 +88,9 @@ impl Default for ReverbModel {
 
 struct Reverb {
     delay_left: Delay,
+    feedback_left: Delay,
+    delay_one: f32,
+    delay_feedback: f32,
 }
 
 impl Plugin for Reverb {
@@ -104,6 +107,9 @@ impl Plugin for Reverb {
     fn new(_sample_rate: f32, _model: &ReverbModel) -> Self {
         Self {
             delay_left: Delay::new(44_100),
+            feedback_left: Delay::new(44_100),
+            delay_one: 0f32,
+            delay_feedback: 0f32,
         }
     }
 
@@ -117,8 +123,11 @@ impl Plugin for Reverb {
                 self.delay_left.set_time((model.time[i] * 44_100f32) as i32);
                 //self.delay_left.buffer.contents.iter_mut().map(|x| *x = 0f32).count();
             }
+
+            self.delay_one = self.delay_left.process(input[0][i] + 0.5 * self.delay_feedback);
+            self.delay_feedback = self.feedback_left.process(self.delay_one);
             
-            output[0][i] = self.delay_left.process(input[0][i]);
+            output[0][i] = self.delay_one;
             output[1][i] = input[1][i];
         }
     }            
