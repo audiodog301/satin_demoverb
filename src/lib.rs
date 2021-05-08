@@ -111,13 +111,13 @@ struct DelayWithFeedback {
 }
 
 impl DelayWithFeedback {
-    pub fn new(time: i32) -> Self {
+    pub fn new(time: i32, feedback: f32) -> Self {
         Self {
             initial_delay: Delay::new(time),
             feedback_delay: Delay::new(time),
             former_initial: 0f32,
             former_feedback: 0f32,
-            feedback: 0.5f32,
+            feedback: feedback,
         }
     }
 
@@ -213,7 +213,7 @@ impl Plugin for Reverb {
     #[inline]
     fn new(_sample_rate: f32, _model: &ReverbModel) -> Self {
         Self {
-            delay_left: DelayWithFeedback::new(MAX),
+            delay_left: DelayWithFeedback::new(_model.time as i32, _model.feedback),
         }
     }
 
