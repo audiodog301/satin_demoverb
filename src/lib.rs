@@ -67,7 +67,7 @@ impl Delay {
     }
 
     fn set_time(&mut self, time: i32) {
-        self.buffer.output = (self.buffer.input - time).rem_euclid(self.buffer.contents.len() as i32)
+        self.buffer.output = (self.buffer.output - time).rem_euclid(self.buffer.contents.len() as i32)
     }
 }
 
@@ -131,6 +131,7 @@ impl Default for ReverbModel {
 
 struct Reverb {
     delay_left: DelayWithFeedback,
+    delay_right: DelayWithFeedback,
 }
 
 impl Plugin for Reverb {
@@ -146,7 +147,8 @@ impl Plugin for Reverb {
     #[inline]
     fn new(_sample_rate: f32, _model: &ReverbModel) -> Self {
         Self {
-            delay_left: DelayWithFeedback::new(MAX)
+            delay_left: DelayWithFeedback::new(MAX),
+            delay_right: DelayWithFeedback::new(MAX),
         }
     }
 
@@ -158,13 +160,15 @@ impl Plugin for Reverb {
         for i in 0..ctx.nframes {          
             if model.time.is_smoothing() {
                 self.delay_left.set_time((model.time[i] * MAX as f32) as i32);
+                self.delay_right.set_time((model.time[i] * MAX as f32) as i32);
             }
             if model.feedback.is_smoothing() {
                 self.delay_left.set_feedback(model.feedback[i]);
+                self.delay_right.set_feedback(model.feedback[i]);
             }
            
             output[0][i] = self.delay_left.process(input[0][i]);
-            output[1][i] = input[1][i];
+            output[1][i] = self.delay_right.process(input[0][i]);
         }
     }            
 }
