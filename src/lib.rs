@@ -11,8 +11,8 @@ use baseplug::{
 
 struct Buffer {
     contents: Vec<f32>,
-    input: usize,
-    output: usize,
+    input: i32,
+    output: i32,
 }
 
 impl Buffer {
@@ -25,33 +25,36 @@ impl Buffer {
     }
 
     fn read(&self) -> f32 {
-        self.contents[self.output]
+        self.contents[self.output as usize]
     }
 
     fn write(&mut self, input: f32) {
-        self.contents[self.input] = input;
+        self.contents[self.input as usize] = input;
     }
 
     fn increment(&mut self) {
-        self.output = (self.output + 1).rem_euclid(self.contents.len());
-        self.input = (self.input + 1).rem_euclid(self.contents.len());
+        self.output = (self.output + 1).rem_euclid(self.contents.len() as i32);
+        self.input = (self.input + 1).rem_euclid(self.contents.len() as i32);
     }
 }
 
 struct Delay {
     buffer: Buffer,
-    time: u32,
+    time: i32,
 }
 
 impl Delay {
-    pub fn new(time: u32) -> Self {
+    pub fn new(time: i32) -> Self {
         let mut buffer = Buffer::new(44_100);
-        buffer.output = (buffer.input as i32 - time as i32).rem_euclid(buffer.contents.len() as i32) as usize;
         
-        Self {
+        let mut result = Self {
             buffer: buffer,
             time: time,
-        }
+        };
+
+        result.set_time(time);
+
+        result
     }
 
     fn process(&mut self, input: f32) -> f32 {
@@ -61,8 +64,8 @@ impl Delay {
         out
     }
 
-    fn set_time(&mut self, time: usize) {
-        self.buffer.output = (self.buffer.input as i32 - time as i32).rem_euclid(self.buffer.contents.len() as i32) as usize
+    fn set_time(&mut self, time: i32) {
+        self.buffer.output = (self.buffer.input - time).rem_euclid(self.buffer.contents.len() as i32)
     }
 }
 
@@ -111,7 +114,7 @@ impl Plugin for Reverb {
         
         for i in 0..ctx.nframes {          
             if model.time.is_smoothing() {
-                self.delay_left.set_time((model.time[i] * 44_100f32) as usize);
+                self.delay_left.set_time((model.time[i] * 44_100f32) as i32);
                 //self.delay_left.buffer.contents.iter_mut().map(|x| *x = 0f32).count();
             }
             
