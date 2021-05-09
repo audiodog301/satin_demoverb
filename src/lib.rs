@@ -1,4 +1,3 @@
-
 #![allow(incomplete_features)]
 #![feature(generic_associated_types)]
 
@@ -42,7 +41,6 @@ impl Buffer {
 
 struct Delay {
     buffer: Buffer,
-    time: i32,
 }
 
 impl Delay {
@@ -51,10 +49,9 @@ impl Delay {
         
         let mut result = Self {
             buffer: buffer,
-            time: time,
         };
 
-        result.set_time(time);
+        result.buffer.output = (result.buffer.input - time).rem_euclid(result.buffer.contents.len() as i32);
 
         result
     }
@@ -98,7 +95,7 @@ impl RoundingErrorDelay {
     }
 
     fn set_time(&mut self, time: i32) {
-        self.buffer.output = (self.buffer.output - time).rem_euclid(self.buffer.contents.len() as i32)
+        self.buffer.output = (self.buffer.output - time).rem_euclid(self.buffer.contents.len() as i32);
     }
 }
 
@@ -213,7 +210,7 @@ impl Plugin for Reverb {
     #[inline]
     fn new(_sample_rate: f32, _model: &ReverbModel) -> Self {
         Self {
-            delay_left: DelayWithFeedback::new(_model.time as i32, _model.feedback),
+            delay_left: DelayWithFeedback::new((_model.time * MAX as f32) as i32, _model.feedback),
         }
     }
 
@@ -231,6 +228,7 @@ impl Plugin for Reverb {
             }
            
             output[0][i] = self.delay_left.process(input[0][i]);
+            output[1][i] = input[1][i];
         }
     }            
 }
