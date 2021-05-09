@@ -8,8 +8,6 @@ use baseplug::{
     Plugin,
 };
 
-const MAX: i32 = 44_100;
-
 struct Buffer {
     contents: Vec<f32>,
     input: i32,
@@ -44,8 +42,8 @@ struct Delay {
 }
 
 impl Delay {
-    pub fn new(time: i32) -> Self {
-        let mut buffer = Buffer::new(MAX as usize);
+    pub fn new(time: i32, sample_rate: f32) -> Self {
+        let mut buffer = Buffer::new(sample_rate as usize);
         
         let mut result = Self {
             buffer: buffer,
@@ -74,8 +72,8 @@ struct RoundingErrorDelay {
 }
 
 impl RoundingErrorDelay {
-    pub fn new(time: i32) -> Self {
-        let mut buffer = Buffer::new(MAX as usize);
+    pub fn new(time: i32, sample_rate: f32) -> Self {
+        let mut buffer = Buffer::new(sample_rate as usize);
         
         let mut result = Self {
             buffer: buffer,
@@ -108,10 +106,10 @@ struct DelayWithFeedback {
 }
 
 impl DelayWithFeedback {
-    pub fn new(time: i32, feedback: f32) -> Self {
+    pub fn new(time: i32, feedback: f32, sample_rate: f32) -> Self {
         Self {
-            initial_delay: Delay::new(time),
-            feedback_delay: Delay::new(time),
+            initial_delay: Delay::new(time, sample_rate),
+            feedback_delay: Delay::new(time, sample_rate),
             former_initial: 0f32,
             former_feedback: 0f32,
             feedback: feedback,
@@ -144,10 +142,10 @@ struct RoundingErrorDelayWithFeedback {
 }
 
 impl RoundingErrorDelayWithFeedback {
-    pub fn new(time: i32, feedback: f32) -> Self {
+    pub fn new(time: i32, feedback: f32, sample_rate: f32) -> Self {
         Self {
-            initial_delay: RoundingErrorDelay::new(time),
-            feedback_delay: RoundingErrorDelay::new(time),
+            initial_delay: RoundingErrorDelay::new(time, sample_rate),
+            feedback_delay: RoundingErrorDelay::new(time, sample_rate),
             former_initial: 0f32,
             former_feedback: 0f32,
             feedback: feedback,
@@ -171,6 +169,34 @@ impl RoundingErrorDelayWithFeedback {
     }
 }
 
+struct Lowpass {
+    former_input: f32,
+    former_output: f32,
+    a: f32,
+}
+
+impl Lowpass{
+    pub fn new(a: f32) -> Self {
+        Self {
+            former_input: 0f32,
+            former_output: 0f32,
+            a: a,
+        }
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        let out: f32 = ((1f32 - self.a) * self.former_output) + (self.a * ((input + self.former_input) / 2f32));
+        self.former_input = input;
+        self.former_output = out;
+
+        out
+    }
+
+    fn set_a(&mut self, a: f32) {
+        self.a = a;
+    }
+}
+
 baseplug::model! {
     #[derive(Debug, Serialize, Deserialize)]
     struct ReverbModel {
@@ -181,6 +207,10 @@ baseplug::model! {
         #[model(min = 0.0, max = 1.0)]
         #[parameter(name = "feedback")]
         feedback: f32,
+
+        #[model(min = 0.0, max = 1.0)]
+        #[parameter(name = "cutoff")]
+        cutoff: f32,
     }
 }
 
@@ -189,17 +219,20 @@ impl Default for ReverbModel {
         Self {
             time: 1.0,
             feedback: 0.5,
+            cutoff: 1.0,
         }
     }
 }
 
 struct Reverb {
     delay_left: DelayWithFeedback,
+    filter_left: Lowpass,
+    sample_rate: f32,
 }
 
 impl Plugin for Reverb {
-    const NAME: &'static str = "Plugin";
-    const PRODUCT: &'static str = "Plugin";
+    const NAME: &'static str = "satin_demoverb";
+    const PRODUCT: &'static str = "satin_demoverb";
     const VENDOR: &'static str = "audiodog301";
 
     const INPUT_CHANNELS: usize = 2;
@@ -210,7 +243,9 @@ impl Plugin for Reverb {
     #[inline]
     fn new(_sample_rate: f32, _model: &ReverbModel) -> Self {
         Self {
-            delay_left: DelayWithFeedback::new((_model.time * MAX as f32) as i32 - 1, _model.feedback),
+            delay_left: DelayWithFeedback::new((_model.time * (_sample_rate - 1f32) as f32) as i32, _model.feedback, _sample_rate),
+            filter_left: Lowpass::new(_model.cutoff),
+            sample_rate: _sample_rate,
         }
     }
 
@@ -221,13 +256,16 @@ impl Plugin for Reverb {
         
         for i in 0..ctx.nframes {          
             if model.time.is_smoothing() {
-                self.delay_left.set_time((model.time[i] * MAX as f32) as i32 - 1);
+                self.delay_left.set_time((model.time[i] * (self.sample_rate - 1f32) as f32) as i32);
             }
             if model.feedback.is_smoothing() {
                 self.delay_left.set_feedback(model.feedback[i]);
             }
+            if model.cutoff.is_smoothing() {
+                self.filter_left.set_a(model.cutoff[i]);
+            }
            
-            output[0][i] = self.delay_left.process(input[0][i]);
+            output[0][i] = self.filter_left.process(self.delay_left.process(input[0][i]));
             output[1][i] = input[1][i];
         }
     }            
