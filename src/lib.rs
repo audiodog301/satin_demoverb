@@ -197,36 +197,72 @@ impl Lowpass{
     }
 }
 
+struct Granularverb {
+    delay: DelayWithFeedback,
+    filter: Lowpass,
+}
+
+impl Granularverb {
+    pub fn new(length: f32, sample_rate: f32) -> Self {
+        Self {
+            delay: DelayWithFeedback::new((0.04109589f32 * (sample_rate - 1f32)) as i32, (length * 0.04f32) + 0.9f32, sample_rate),
+            filter: Lowpass::new(0.04109589),
+        }
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        self.filter.process(self.delay.process(input)) + input
+    }
+
+    fn set_length(&mut self, length: f32) {
+        self.delay.set_feedback((length * 0.09f32) + 0.9f32);
+    }
+}
+
 baseplug::model! {
     #[derive(Debug, Serialize, Deserialize)]
     struct ReverbModel {
         #[model(min = 0.0, max = 1.0)]
-        #[parameter(name = "time")]
-        time: f32,
+        #[parameter(name = "delay_time")]
+        delay_time: f32,
 
         #[model(min = 0.0, max = 1.0)]
-        #[parameter(name = "feedback")]
-        feedback: f32,
+        #[parameter(name = "delay_feedback")]
+        delay_feedback: f32,
 
         #[model(min = 0.0, max = 1.0)]
-        #[parameter(name = "cutoff")]
-        cutoff: f32,
+        #[parameter(name = "delay_wet_dry")]
+        delay_wet_dry : f32,
+
+        #[model(min = 0.0, max = 1.0)]
+        #[parameter(name = "reverb_length")]
+        reverb_length: f32,
+
+        #[model(min = 0.0, max = 1.0)]
+        #[parameter(name = "final_cutoff")]
+        final_cutoff: f32,
     }
 }
 
 impl Default for ReverbModel {
     fn default() -> Self {
         Self {
-            time: 1.0,
-            feedback: 0.5,
-            cutoff: 1.0,
+            delay_time: 1.0,
+            delay_feedback: 0.5,
+            delay_wet_dry: 0.5,
+            reverb_length: 0.5,
+            final_cutoff: 1.0,
         }
     }
 }
 
 struct Reverb {
     delay_left: DelayWithFeedback,
+    reverb_left: Granularverb,
     filter_left: Lowpass,
+    delay_right: DelayWithFeedback,
+    reverb_right: Granularverb,
+    filter_right: Lowpass,
     sample_rate: f32,
 }
 
@@ -243,8 +279,12 @@ impl Plugin for Reverb {
     #[inline]
     fn new(_sample_rate: f32, _model: &ReverbModel) -> Self {
         Self {
-            delay_left: DelayWithFeedback::new((_model.time * (_sample_rate - 1f32) as f32) as i32, _model.feedback, _sample_rate),
-            filter_left: Lowpass::new(_model.cutoff),
+            delay_left: DelayWithFeedback::new((_model.delay_time * (_sample_rate - 1f32) as f32) as i32, _model.delay_feedback, _sample_rate),
+            reverb_left: Granularverb::new(_model.reverb_length, _sample_rate),
+            filter_left: Lowpass::new(_model.final_cutoff),
+            delay_right: DelayWithFeedback::new((_model.delay_time * (_sample_rate - 1f32) as f32) as i32, _model.delay_feedback, _sample_rate),
+            reverb_right: Granularverb::new(_model.reverb_length, _sample_rate),
+            filter_right: Lowpass::new(_model.final_cutoff),
             sample_rate: _sample_rate,
         }
     }
@@ -255,18 +295,25 @@ impl Plugin for Reverb {
         let output = &mut ctx.outputs[0].buffers;
         
         for i in 0..ctx.nframes {          
-            if model.time.is_smoothing() {
-                self.delay_left.set_time((model.time[i] * (self.sample_rate - 1f32) as f32) as i32);
+            if model.delay_time.is_smoothing() {
+                self.delay_left.set_time((model.delay_time[i] * (self.sample_rate - 1f32) as f32) as i32);
+                self.delay_right.set_time((model.delay_time[i] * (self.sample_rate - 1f32) as f32) as i32);
             }
-            if model.feedback.is_smoothing() {
-                self.delay_left.set_feedback(model.feedback[i]);
+            if model.delay_feedback.is_smoothing() {
+                self.delay_left.set_feedback(model.delay_feedback[i]);
+                self.delay_right.set_feedback(model.delay_feedback[i]);
             }
-            if model.cutoff.is_smoothing() {
-                self.filter_left.set_a(model.cutoff[i]);
+            if model.reverb_length.is_smoothing() {
+                self.reverb_left.set_length(model.reverb_length[i]);
+                self.reverb_right.set_length(model.reverb_length[i]);
+            }
+            if model.final_cutoff.is_smoothing() {
+                self.filter_left.set_a(model.final_cutoff[i]);
+                self.filter_right.set_a(model.final_cutoff[i]);
             }
            
-            output[0][i] = self.filter_left.process(self.delay_left.process(input[0][i]));
-            output[1][i] = input[1][i];
+            output[0][i] = self.filter_left.process(self.reverb_left.process((self.delay_left.process(input[0][i]) * model.delay_wet_dry[i]) + (1f32 - model.delay_wet_dry[i]) * input[0][i]));
+            output[1][i] = self.filter_right.process(self.reverb_right.process((self.delay_right.process(input[1][i]) * model.delay_wet_dry[i]) + (1f32 - model.delay_wet_dry[i]) * input[1][i]));;
         }
     }            
 }
