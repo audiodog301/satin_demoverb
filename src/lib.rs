@@ -31,9 +31,18 @@ impl Buffer {
         self.contents[self.input as usize] = input;
     }
 
+    fn set_pos(&mut self, index: i32) {
+        self.input = index.rem_euclid(self.contents.len() as i32);
+        self.output = index.rem_euclid(self.contents.len() as i32);
+    }
+
     fn increment(&mut self) {
         self.output = (self.output + 1).rem_euclid(self.contents.len() as i32);
         self.input = (self.input + 1).rem_euclid(self.contents.len() as i32);
+    }
+
+    fn increment_out(&mut self) {
+        self.output = (self.output + 1).rem_euclid(self.contents.len() as i32);
     }
 }
 
@@ -80,7 +89,9 @@ impl RoundingErrorDelay {
             time: time,
         };
 
-        result.set_time(time);
+        for x in 0..50 {
+            result.set_time(time);
+        }
 
         result
     }
@@ -131,6 +142,11 @@ impl DelayWithFeedback {
     fn set_feedback(&mut self, feedback: f32) {
         self.feedback = feedback;
     }
+
+    fn clear(&mut self) {
+        self.initial_delay.buffer.contents.iter_mut().map(|x| *x = 0f32);
+        self.feedback_delay.buffer.contents.iter_mut().map(|x| *x = 0f32);
+    }
 }
 
 struct RoundingErrorDelayWithFeedback {
@@ -167,6 +183,12 @@ impl RoundingErrorDelayWithFeedback {
     fn set_feedback(&mut self, feedback: f32) {
         self.feedback = feedback;
     }
+}
+
+enum DelayMode {
+    Normal,
+    DoubleInitial,
+    DoubleInitialAndFeedback,
 }
 
 struct Lowpass {
@@ -232,11 +254,19 @@ baseplug::model! {
 
         #[model(min = 0.0, max = 1.0)]
         #[parameter(name = "delay_wet_dry")]
-        delay_wet_dry : f32,
+        delay_wet_dry: f32,
+
+        #[model(min = 0.0, max = 2.0)]
+        #[parameter(name = "delay_mode")]
+        delay_mode: f32,
 
         #[model(min = 0.0, max = 1.0)]
         #[parameter(name = "reverb_length")]
         reverb_length: f32,
+
+        #[model(min = 0.0, max = 1.0)]
+        #[parameter(name = "reverb_wet_dry")]
+        reverb_wet_dry: f32,
 
         #[model(min = 0.0, max = 1.0)]
         #[parameter(name = "final_cutoff")]
@@ -250,7 +280,9 @@ impl Default for ReverbModel {
             delay_time: 1.0,
             delay_feedback: 0.5,
             delay_wet_dry: 0.5,
+            delay_mode: 0.0,
             reverb_length: 0.5,
+            reverb_wet_dry: 0.5,
             final_cutoff: 1.0,
         }
     }
@@ -264,6 +296,7 @@ struct Reverb {
     reverb_right: Granularverb,
     filter_right: Lowpass,
     sample_rate: f32,
+    mode: DelayMode,
 }
 
 impl Plugin for Reverb {
@@ -286,6 +319,7 @@ impl Plugin for Reverb {
             reverb_right: Granularverb::new(_model.reverb_length, _sample_rate),
             filter_right: Lowpass::new(_model.final_cutoff),
             sample_rate: _sample_rate,
+            mode: DelayMode::Normal,
         }
     }
 
@@ -311,9 +345,45 @@ impl Plugin for Reverb {
                 self.filter_left.set_a(model.final_cutoff[i]);
                 self.filter_right.set_a(model.final_cutoff[i]);
             }
+
+            let delay_left_current: f32 = (self.delay_left.process(input[0][i]) * model.delay_wet_dry[i]) + ((1f32 - model.delay_wet_dry[i]) * input[0][i]);
+            let delay_right_current: f32 = (self.delay_right.process(input[1][i]) * model.delay_wet_dry[i]) + ((1f32 - model.delay_wet_dry[i]) * input[1][i]);
+
+            let reverb_left_current: f32 = (model.reverb_wet_dry[i] * self.reverb_left.process(delay_left_current)) + ((1f32 - model.reverb_wet_dry[i]) * delay_left_current);
+            let reverb_right_current: f32 = (model.reverb_wet_dry[i] * self.reverb_right.process(delay_right_current)) + ((1f32 - model.reverb_wet_dry[i]) * delay_right_current);
            
-            output[0][i] = self.filter_left.process(self.reverb_left.process((self.delay_left.process(input[0][i]) * model.delay_wet_dry[i]) + (1f32 - model.delay_wet_dry[i]) * input[0][i]));
-            output[1][i] = self.filter_right.process(self.reverb_right.process((self.delay_right.process(input[1][i]) * model.delay_wet_dry[i]) + (1f32 - model.delay_wet_dry[i]) * input[1][i]));;
+            output[0][i] = self.filter_left.process(reverb_left_current);
+            output[1][i] = self.filter_right.process(reverb_right_current);
+            
+            if model.delay_mode[i] < 1f32 {
+                if !matches!(self.mode, DelayMode::Normal) {
+                    self.mode = DelayMode::Normal;
+                    self.delay_left.clear();
+                    self.delay_right.clear();
+
+                    self.delay_left.initial_delay.buffer.set_pos(0);
+                    self.delay_left.feedback_delay.buffer.set_pos(0);
+
+                    self.delay_right.initial_delay.buffer.set_pos(0);
+                    self.delay_right.feedback_delay.buffer.set_pos(0);
+
+                    self.delay_left.set_time((model.delay_time[i] * (self.sample_rate - 1f32) as f32) as i32);
+                    self.delay_right.set_time((model.delay_time[i] * (self.sample_rate - 1f32) as f32) as i32);
+                }
+            }            
+            if model.delay_mode[i] >= 1f32 && model.delay_mode[i] < 2f32{
+                self.mode = DelayMode::DoubleInitial;
+            
+                self.delay_left.initial_delay.buffer.increment_out();
+                self.delay_right.initial_delay.buffer.increment_out();
+            }
+            if model.delay_mode[i] >= 2f32 && model.delay_mode[i] < 3f32 {
+                self.delay_left.initial_delay.buffer.increment_out();
+                self.delay_left.feedback_delay.buffer.increment_out();
+                
+                self.delay_right.initial_delay.buffer.increment_out();
+                self.delay_right.feedback_delay.buffer.increment_out();
+            }
         }
     }            
 }
